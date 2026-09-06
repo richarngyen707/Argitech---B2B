@@ -1,0 +1,6 @@
+{
+  "name": "AgriTwin-B2B",
+  "description": "Global Autonomous Machinery & Crop Simulation Dashboard for Agricultural Cooperatives and Farm Managers",
+  "requestFramePermissions": ["geolocation"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

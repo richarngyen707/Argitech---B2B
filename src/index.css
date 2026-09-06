@@ -1,0 +1,156 @@
+@import "tailwindcss";
+
+@layer base {
+  body {
+    font-family: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
+  }
+  
+  .font-mono {
+    font-family: 'JetBrains Mono', monospace;
+  }
+}
+
+/* Custom Leaflet Map styling to match dark agritech theme */
+.leaflet-container {
+  width: 100%;
+  height: 100%;
+  background: #090d16;
+  font-family: inherit;
+}
+
+.leaflet-tile {
+  filter: brightness(0.85) contrast(1.1) saturate(0.9);
+}
+
+.dark-tiles .leaflet-tile {
+  filter: brightness(0.7) invert(1) contrast(3) hue-rotate(200deg) saturate(0.3) brightness(0.7);
+}
+
+/* Strict Z-Index Pane Hierarchy */
+.leaflet-pane.leaflet-ndvi-pane { z-index: 350 !important; }
+.leaflet-pane.leaflet-flight-path-pane { z-index: 375 !important; }
+.leaflet-pane.leaflet-spray-swath-pane { z-index: 410 !important; }
+.leaflet-pane.leaflet-nfz-pane { z-index: 430 !important; }
+.leaflet-pane.leaflet-dock-pane { z-index: 580 !important; }
+.leaflet-pane.leaflet-swarm-pane { z-index: 610 !important; }
+.leaflet-pane.leaflet-active-drone-pane { z-index: 650 !important; }
+.leaflet-pane.leaflet-popup-pane { z-index: 9500 !important; }
+.leaflet-pane.leaflet-tooltip-pane { z-index: 9999 !important; }
+
+/* Custom Dark Theme Popups */
+.leaflet-popup-content-wrapper {
+  background: #090d16 !important;
+  color: #f8fafc !important;
+  border-radius: 12px !important;
+  border: 1px solid #334155 !important;
+  box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.75), 0 0 15px rgba(16, 185, 129, 0.15) !important;
+  padding: 4px !important;
+  backdrop-filter: blur(12px);
+}
+
+.leaflet-popup-tip {
+  background: #090d16 !important;
+  border: 1px solid #334155 !important;
+}
+
+.leaflet-popup-content {
+  margin: 10px 14px !important;
+  font-size: 12px !important;
+  line-height: 1.5 !important;
+  color: #e2e8f0 !important;
+}
+
+.leaflet-popup-close-button {
+  color: #94a3b8 !important;
+  padding: 6px 8px !important;
+}
+
+.leaflet-popup-close-button:hover {
+  color: #34d399 !important;
+}
+
+/* Custom Tooltips */
+.leaflet-tooltip.agritwin-custom-tooltip {
+  background: #090d16 !important;
+  color: #f8fafc !important;
+  border: 1px solid #334155 !important;
+  border-radius: 8px !important;
+  box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.6) !important;
+  padding: 6px 10px !important;
+  font-size: 11px !important;
+  font-family: inherit !important;
+  line-height: 1.4 !important;
+}
+
+.leaflet-tooltip-top:before {
+  border-top-color: #334155 !important;
+}
+
+.leaflet-tooltip-bottom:before {
+  border-bottom-color: #334155 !important;
+}
+
+/* Custom Marker Pins */
+.custom-drone-pin,
+.custom-swarm-pin,
+.custom-dock-pin,
+.custom-field-pin,
+.custom-bp-pin {
+  cursor: pointer;
+  transition: transform 0.15s ease-out;
+}
+
+.custom-drone-pin:hover,
+.custom-swarm-pin:hover,
+.custom-dock-pin:hover {
+  transform: scale(1.08);
+  z-index: 1000 !important;
+}
+
+/* Custom scrollbars */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: #090d16;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #1e293b;
+  border-radius: 9999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #334155;
+}
+
+/* Radar pulse animation for field markers */
+@keyframes radar-pulse {
+  0% {
+    transform: scale(0.95);
+    box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.7);
+  }
+  70% {
+    transform: scale(1.05);
+    box-shadow: 0 0 0 16px rgba(16, 185, 129, 0);
+  }
+  100% {
+    transform: scale(0.95);
+    box-shadow: 0 0 0 0 rgba(16, 185, 129, 0);
+  }
+}
+
+.radar-marker {
+  animation: radar-pulse 2s infinite ease-in-out;
+}
+
+@keyframes drone-prop-spin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+
+.drone-spinning {
+  animation: drone-prop-spin 0.4s linear infinite;
+}
