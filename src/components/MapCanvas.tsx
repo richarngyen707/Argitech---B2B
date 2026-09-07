@@ -152,6 +152,10 @@ interface MapCanvasProps {
   ) => void;
   onAcceptSaveMission?: () => void;
   onOpenSavedMission?: () => void;
+  canUndo?: boolean;
+  canRedo?: boolean;
+  onUndo?: () => void;
+  onRedo?: () => void;
 }
 
 interface SubZoneLayerBundle {
@@ -209,6 +213,10 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
   onNfzRepositioned,
   onAcceptSaveMission,
   onOpenSavedMission,
+  canUndo,
+  canRedo,
+  onUndo,
+  onRedo,
 }) => {
   const t = translations[language];
   const mapContainerRef = useRef<HTMLDivElement>(null);
@@ -3332,6 +3340,10 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
             hasNfzConflict={hasNfzConflict}
             onAcceptSaveMission={onAcceptSaveMission}
             onOpenSavedMission={onOpenSavedMission}
+            canUndo={canUndo}
+            canRedo={canRedo}
+            onUndo={onUndo}
+            onRedo={onRedo}
             flightDistanceMeters={
               calculateGeoDistanceMeters(
                 { lat: (currentCoords?.lat ?? 10.7769) - 0.003, lng: (currentCoords?.lng ?? 106.7009) - 0.003 },

@@ -19,7 +19,15 @@ const STORAGE_KEYS = {
   HARDWARE: 'agritwin_hardware_v1',
   SAVED_MISSION: 'agriTwin_saved_mission',
   MISSION_SNAPSHOTS: 'agriTwin_mission_snapshots_v1',
+  LAST_COMMITTED_MISSION: 'agriTwin_last_committed_mission_v1',
 };
+
+export interface SpatialHistoryState {
+  subZones: SubZonePolygonData[];
+  userCustomizedPlots: UserCustomizedPlotsStore;
+  nfzPolygon: Coordinates[];
+  fieldArea: number;
+}
 
 export interface AgriTwinSavedMissionState {
   version: string;
@@ -92,6 +100,7 @@ export function saveActiveMissionLayout(params: {
   try {
     localStorage.setItem(STORAGE_KEYS.SAVED_MISSION, JSON.stringify(state));
     if (isExplicitCommit) {
+      localStorage.setItem(STORAGE_KEYS.LAST_COMMITTED_MISSION, JSON.stringify(state));
       addMissionSnapshot(state);
     }
   } catch (err) {
@@ -99,6 +108,31 @@ export function saveActiveMissionLayout(params: {
   }
 
   return state;
+}
+
+/**
+ * Retrieves the last confirmed/committed mission snapshot (Google Doc / Accept & Save snapshot).
+ */
+export function getCommittedMissionSnapshot(): AgriTwinSavedMissionState | null {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEYS.LAST_COMMITTED_MISSION);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (parsed && Array.isArray(parsed.subZones) && parsed.subZones.length > 0) {
+        return parsed;
+      }
+    }
+    // Fallback to latest historical snapshot if available
+    const snapshots = getMissionSnapshots();
+    if (snapshots.length > 0 && snapshots[0].subZones?.length > 0) {
+      return snapshots[0];
+    }
+    // Fallback to active saved mission
+    return getSavedMissionLayout();
+  } catch (err) {
+    console.warn('Failed to read committed mission from localStorage:', err);
+    return null;
+  }
 }
 
 /**

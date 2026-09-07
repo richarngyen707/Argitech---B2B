@@ -18,6 +18,8 @@ import {
   Move,
   ShieldCheck,
   FolderOpen,
+  Undo2,
+  Redo2,
 } from 'lucide-react';
 import {
   ZoneHealthType,
@@ -47,6 +49,10 @@ interface PrescriptionZonePainterProps {
   flightDistanceMeters?: number;
   onAcceptSaveMission?: () => void;
   onOpenSavedMission?: () => void;
+  canUndo?: boolean;
+  canRedo?: boolean;
+  onUndo?: () => void;
+  onRedo?: () => void;
 }
 
 export const PrescriptionZonePainter: React.FC<PrescriptionZonePainterProps> = ({
@@ -63,6 +69,10 @@ export const PrescriptionZonePainter: React.FC<PrescriptionZonePainterProps> = (
   flightDistanceMeters = 340,
   onAcceptSaveMission,
   onOpenSavedMission,
+  canUndo = false,
+  canRedo = false,
+  onUndo,
+  onRedo,
 }) => {
   const t = translations[language];
   const [activeTab, setActiveTab] = useState<'payloads' | 'transforms'>('payloads');
@@ -367,6 +377,36 @@ export const PrescriptionZonePainter: React.FC<PrescriptionZonePainterProps> = (
 
         {/* Global Orientation Alignment & Reset Buttons */}
         <div className="flex items-center gap-2 flex-wrap ml-auto">
+          {/* Quick Undo/Redo Buttons */}
+          {onUndo && (
+            <button
+              id="btn_painter_undo"
+              type="button"
+              onClick={onUndo}
+              disabled={!canUndo}
+              className="flex items-center gap-1 text-[11px] px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 font-medium transition-all disabled:opacity-40 disabled:pointer-events-none"
+              title="Undo last spatial modification (Ctrl+Z)"
+            >
+              <Undo2 className="w-3 h-3 text-cyan-400" />
+              <span>Undo</span>
+            </button>
+          )}
+          {onRedo && (
+            <button
+              id="btn_painter_redo"
+              type="button"
+              onClick={onRedo}
+              disabled={!canRedo}
+              className="flex items-center gap-1 text-[11px] px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 font-medium transition-all disabled:opacity-40 disabled:pointer-events-none"
+              title="Redo modification (Ctrl+Y)"
+            >
+              <Redo2 className="w-3 h-3 text-cyan-400" />
+              <span>Redo</span>
+            </button>
+          )}
+
+          <div className="h-3 w-px bg-slate-700 hidden sm:block"></div>
+
           <div className="flex items-center gap-1">
             <span className="text-[11px] text-slate-400 font-medium">Align:</span>
             <button

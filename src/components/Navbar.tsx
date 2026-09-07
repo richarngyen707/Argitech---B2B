@@ -15,6 +15,10 @@ import {
   FileText,
   Radio,
   FolderOpen,
+  Undo2,
+  Redo2,
+  CheckCircle2,
+  History,
 } from 'lucide-react';
 import { SupportedLanguage, TelemetryData } from '../types';
 import { translations } from '../i18n/translations';
@@ -34,6 +38,16 @@ interface NavbarProps {
   onExportVietGapPdf: () => void;
   onAcceptSaveMission: () => void;
   onOpenSavedMission: () => void;
+  // History & State Management Controls:
+  canUndo: boolean;
+  canRedo: boolean;
+  onUndo: () => void;
+  onRedo: () => void;
+  hasUnsavedChanges: boolean;
+  onDiscardUnsavedChanges: () => void;
+  onRestoreFactoryDefaults: () => void;
+  pastCount?: number;
+  futureCount?: number;
 }
 
 const languageOptions: { code: SupportedLanguage; label: string; flag: string }[] = [
@@ -60,6 +74,15 @@ export const Navbar: React.FC<NavbarProps> = ({
   onExportVietGapPdf,
   onAcceptSaveMission,
   onOpenSavedMission,
+  canUndo,
+  canRedo,
+  onUndo,
+  onRedo,
+  hasUnsavedChanges,
+  onDiscardUnsavedChanges,
+  onRestoreFactoryDefaults,
+  pastCount = 0,
+  futureCount = 0,
 }) => {
   const t = translations[language];
 
@@ -255,6 +278,114 @@ export const Navbar: React.FC<NavbarProps> = ({
               </select>
             </div>
           </div>
+        </div>
+      </div>
+
+      {/* Secondary Top Action Bar: State History (Undo / Redo / Un-restore) & Saved State Controls */}
+      <div
+        id="top_state_history_action_bar"
+        className="mt-2.5 pt-2 border-t border-slate-800/80 max-w-[1920px] mx-auto flex flex-wrap items-center justify-between gap-2.5 text-xs"
+      >
+        {/* Left: Unsaved Changes Status Indicator & Keyboard Shortcut Hint */}
+        <div className="flex items-center gap-3">
+          {hasUnsavedChanges ? (
+            <div
+              id="status_indicator_unsaved"
+              className="flex items-center gap-2 px-2.5 py-1 rounded-lg bg-amber-500/10 border border-amber-500/30 text-amber-300 font-semibold shadow-sm transition-all"
+              title="Spatial geometry has been modified since the last confirmed Google Doc / localStorage snapshot"
+            >
+              <span className="relative flex h-2 w-2">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75"></span>
+                <span className="relative inline-flex rounded-full h-2 w-2 bg-amber-500"></span>
+              </span>
+              <span>Unsaved Changes Pending</span>
+            </div>
+          ) : (
+            <div
+              id="status_indicator_saved"
+              className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-emerald-500/10 border border-emerald-500/30 text-emerald-300 font-semibold shadow-sm transition-all"
+              title="All field parcel geometries and swaths match the latest confirmed mission snapshot"
+            >
+              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+              <span>All Changes Saved</span>
+            </div>
+          )}
+
+          <div className="hidden sm:flex items-center gap-2 text-[11px] text-slate-400 font-mono">
+            <span className="text-slate-700">|</span>
+            <span className="text-slate-400 font-sans text-xs">Hotkeys:</span>
+            <kbd className="px-1.5 py-0.5 rounded bg-slate-800 border border-slate-700 text-slate-200 font-mono text-[10px] shadow-sm">
+              Ctrl+Z
+            </kbd>
+            <span className="text-slate-300">Undo</span>
+            <span className="text-slate-700">•</span>
+            <kbd className="px-1.5 py-0.5 rounded bg-slate-800 border border-slate-700 text-slate-200 font-mono text-[10px] shadow-sm">
+              Ctrl+Y
+            </kbd>
+            <span className="text-slate-300">Redo</span>
+          </div>
+        </div>
+
+        {/* Right: History Navigation & Restore/Discard Buttons */}
+        <div className="flex items-center gap-2 flex-wrap">
+          {/* Undo Button */}
+          <button
+            id="btn_header_undo"
+            onClick={onUndo}
+            disabled={!canUndo}
+            className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-semibold bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 hover:text-white transition-all shadow-sm active:scale-95 disabled:opacity-40 disabled:pointer-events-none"
+            title="Undo last change (plot move, resize, rotate, toggle) — Hotkey: Ctrl+Z"
+          >
+            <Undo2 className="w-3.5 h-3.5 text-cyan-400" />
+            <span>Undo</span>
+            {typeof pastCount === 'number' && pastCount > 0 && (
+              <span className="ml-0.5 px-1.5 py-0.2 rounded-full text-[10px] font-mono bg-slate-900 text-cyan-300 border border-slate-700">
+                {pastCount}
+              </span>
+            )}
+          </button>
+
+          {/* Redo / Un-restore Button */}
+          <button
+            id="btn_header_redo"
+            onClick={onRedo}
+            disabled={!canRedo}
+            className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-semibold bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 hover:text-white transition-all shadow-sm active:scale-95 disabled:opacity-40 disabled:pointer-events-none"
+            title="Redo un-restored change — Hotkey: Ctrl+Y / Ctrl+Shift+Z"
+          >
+            <Redo2 className="w-3.5 h-3.5 text-cyan-400" />
+            <span>Redo</span>
+            {typeof futureCount === 'number' && futureCount > 0 && (
+              <span className="ml-0.5 px-1.5 py-0.2 rounded-full text-[10px] font-mono bg-slate-900 text-cyan-300 border border-slate-700">
+                {futureCount}
+              </span>
+            )}
+          </button>
+
+          <div className="h-4 w-px bg-slate-800 hidden sm:block mx-1"></div>
+
+          {/* Discard Unsaved Changes Button */}
+          <button
+            id="btn_header_discard_unsaved"
+            onClick={onDiscardUnsavedChanges}
+            disabled={!hasUnsavedChanges}
+            className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-semibold bg-slate-800/90 hover:bg-amber-950/40 border border-slate-700 hover:border-amber-600/60 text-slate-300 hover:text-amber-300 transition-all shadow-sm active:scale-95 disabled:opacity-40 disabled:pointer-events-none"
+            title="Revert the workspace back to the last confirmed Google Doc / localStorage snapshot"
+          >
+            <History className="w-3.5 h-3.5 text-amber-400" />
+            <span>Discard Unsaved Changes</span>
+          </button>
+
+          {/* Restore Factory Defaults Button */}
+          <button
+            id="btn_header_restore_defaults"
+            onClick={onRestoreFactoryDefaults}
+            className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-semibold bg-slate-800/90 hover:bg-slate-700 border border-slate-700 text-slate-300 hover:text-cyan-200 transition-all shadow-sm active:scale-95"
+            title="Reset all 6 plots back to the initial contiguous 2x3 grid and NFZ default position"
+          >
+            <RotateCcw className="w-3.5 h-3.5 text-slate-400" />
+            <span>Restore Factory Defaults</span>
+          </button>
         </div>
       </div>
     </header>

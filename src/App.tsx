@@ -53,6 +53,8 @@ import {
   getSavedMissionLayout,
   clearSavedMissionLayout,
   AgriTwinSavedMissionState,
+  SpatialHistoryState,
+  getCommittedMissionSnapshot,
 } from './services/storageService';
 import {
   MissionPerformanceReportData,
@@ -333,6 +335,46 @@ export default function App() {
   const subZonesRef = useRef(subZones);
   subZonesRef.current = subZones;
 
+  // Spatial Geometry History Stack (Undo / Redo / Un-restore)
+  const cloneSpatialState = (state: SpatialHistoryState): SpatialHistoryState => ({
+    subZones: JSON.parse(JSON.stringify(state.subZones)),
+    userCustomizedPlots: JSON.parse(JSON.stringify(state.userCustomizedPlots || {})),
+    nfzPolygon: JSON.parse(JSON.stringify(state.nfzPolygon || [])),
+    fieldArea: state.fieldArea,
+  });
+
+  const getSpatialStateSnapshot = (): SpatialHistoryState => ({
+    subZones: JSON.parse(JSON.stringify(subZonesRef.current || subZones)),
+    userCustomizedPlots: JSON.parse(JSON.stringify(userCustomizedPlotsRef.current || userCustomizedPlots)),
+    nfzPolygon: JSON.parse(JSON.stringify(nfzPolygonRef.current || nfzPolygon)),
+    fieldArea,
+  });
+
+  const [pastStates, setPastStates] = useState<SpatialHistoryState[]>([]);
+  const [futureStates, setFutureStates] = useState<SpatialHistoryState[]>([]);
+  const currentStateRef = useRef<SpatialHistoryState>(getSpatialStateSnapshot());
+  const pastStatesRef = useRef<SpatialHistoryState[]>(pastStates);
+  pastStatesRef.current = pastStates;
+  const futureStatesRef = useRef<SpatialHistoryState[]>(futureStates);
+  futureStatesRef.current = futureStates;
+
+  // Unsaved Changes Status Indicator & Committed Snapshot Tracker
+  const [hasUnsavedChanges, setHasUnsavedChanges] = useState<boolean>(false);
+  const lastCommittedJsonRef = useRef<string>(
+    (() => {
+      const committed = getCommittedMissionSnapshot();
+      if (committed && Array.isArray(committed.subZones) && committed.subZones.length > 0) {
+        return JSON.stringify({
+          subZones: committed.subZones,
+          plotGeometryState: committed.plotGeometryState || {},
+          activeNFZGeometry: committed.activeNFZGeometry || [],
+          fieldArea: committed.fieldArea || 2.5,
+        });
+      }
+      return '';
+    })()
+  );
+
   // 12. Mission Performance Report & Open Saved Mission Modal States
   const [isReportModalOpen, setIsReportModalOpen] = useState<boolean>(false);
   const [isOpenSavedModalOpen, setIsOpenSavedModalOpen] = useState<boolean>(false);
@@ -504,6 +546,313 @@ export default function App() {
     };
   }, [machineryType, missionType, language, fieldArea, fetchAdvisoryReport]);
 
+  // Check if state has unsaved changes compared to committed snapshot
+  const checkIfUnsavedChanges = useCallback((stateToCheck: SpatialHistoryState): boolean => {
+    if (!lastCommittedJsonRef.current) {
+      return false;
+    }
+    try {
+      const parsedCommitted = JSON.parse(lastCommittedJsonRef.current);
+      const currentSimplified = {
+        subZones: stateToCheck.subZones.map((z) => ({
+          id: z.id,
+          enabled: z.enabled !== false,
+          areaHa: Number((z.areaHa || 0).toFixed(3)),
+          rotationAngle: Number((z.rotationAngle ?? z.rotationDeg ?? 0).toFixed(1)),
+          bounds: z.bounds,
+        })),
+        nfz: stateToCheck.nfzPolygon,
+      };
+      const committedSimplified = {
+        subZones: (parsedCommitted.subZones || []).map((z: any) => ({
+          id: z.id,
+          enabled: z.enabled !== false,
+          areaHa: Number((z.areaHa || 0).toFixed(3)),
+          rotationAngle: Number((z.rotationAngle ?? z.rotationDeg ?? 0).toFixed(1)),
+          bounds: z.bounds,
+        })),
+        nfz: parsedCommitted.nfzPolygon || parsedCommitted.activeNFZGeometry || [],
+      };
+      return JSON.stringify(currentSimplified) !== JSON.stringify(committedSimplified);
+    } catch {
+      return false;
+    }
+  }, []);
+
+  // Update unsaved status whenever committed JSON changes or component initializes
+  useEffect(() => {
+    if (lastCommittedJsonRef.current) {
+      setHasUnsavedChanges(checkIfUnsavedChanges(currentStateRef.current));
+    }
+  }, [checkIfUnsavedChanges]);
+
+  // Record a new state into the Undo history stack
+  const recordSpatialAction = useCallback(
+    (newState: SpatialHistoryState) => {
+      const prevState = currentStateRef.current;
+      const isDifferent =
+        JSON.stringify(prevState.subZones) !== JSON.stringify(newState.subZones) ||
+        JSON.stringify(prevState.nfzPolygon) !== JSON.stringify(newState.nfzPolygon) ||
+        prevState.fieldArea !== newState.fieldArea;
+
+      if (!isDifferent) return;
+
+      setPastStates((prev) => [...prev.slice(-39), cloneSpatialState(prevState)]);
+      setFutureStates([]); // standard: new edit clears redo future
+      currentStateRef.current = cloneSpatialState(newState);
+
+      setHasUnsavedChanges(checkIfUnsavedChanges(newState));
+    },
+    [checkIfUnsavedChanges]
+  );
+
+  // Apply a spatial state from history (Undo, Redo, Discard, or Restore)
+  const applySpatialState = useCallback(
+    (state: SpatialHistoryState, actionType: 'undo' | 'redo' | 'discard' | 'factory_reset') => {
+      setSubZones(state.subZones);
+      subZonesRef.current = state.subZones;
+      setUserCustomizedPlots(state.userCustomizedPlots);
+      userCustomizedPlotsRef.current = state.userCustomizedPlots;
+      setCustomPlotCoordinates(state.subZones);
+      setHasCustomPlotCoordinates(Object.keys(state.userCustomizedPlots || {}).length > 0);
+      setNfzPolygon(state.nfzPolygon);
+      nfzPolygonRef.current = state.nfzPolygon;
+      if (typeof state.fieldArea === 'number' && state.fieldArea > 0) {
+        setFieldArea(state.fieldArea);
+      }
+
+      // Check NFZ conflict
+      const hasConflict = state.subZones.some(
+        (z) => z.enabled !== false && isPolygonOverlappingPolygon(z.bounds, state.nfzPolygon)
+      );
+      setHasNfzConflict(hasConflict);
+
+      // Save active mission layout into browser storage
+      saveActiveMissionLayout({
+        subZones: state.subZones,
+        nfzPolygon: state.nfzPolygon,
+        fieldArea: state.fieldArea || fieldArea,
+        locationName,
+        currentCoords,
+        isExplicitCommit: false,
+      });
+
+      // Update unsaved status
+      setHasUnsavedChanges(checkIfUnsavedChanges(state));
+
+      // Dynamic Waypoint & Swarm Flight Path Recalculation
+      if (swarmStateRef.current.isSwarmActive && swarmStateRef.current.drones) {
+        const safeCoords = currentCoords || { lat: 10.7769, lng: 106.7009 };
+        const dockCoords: Coordinates = {
+          lat: safeCoords.lat - 0.0022,
+          lng: safeCoords.lng - 0.0035,
+        };
+        const freshPlan = generateDynamicPlotSwarmPlan(dockCoords, state.subZones);
+        setSwarmState((prev) => ({
+          ...prev,
+          drones: freshPlan.drones.map((d, i) => ({
+            ...d,
+            coords: prev.drones?.[i]?.coords || d.coords,
+            progress: prev.drones?.[i]?.progress || d.progress,
+            sprayTrail: prev.drones?.[i]?.sprayTrail || d.sprayTrail,
+            status: prev.drones?.[i]?.status || d.status,
+          })),
+          summary: freshPlan.summary,
+        }));
+      }
+
+      // Advisory debounce
+      if (debounceAdvisoryTimerRef.current) {
+        clearTimeout(debounceAdvisoryTimerRef.current);
+      }
+      debounceAdvisoryTimerRef.current = setTimeout(() => {
+        fetchAdvisoryReport(
+          currentCoords,
+          telemetryRef.current,
+          telemetryRef.current.battery,
+          telemetryRef.current.tankLevel,
+          state.fieldArea || fieldArea,
+          state.subZones
+        );
+      }, 400);
+
+      // Subtle feedback notifications
+      if (actionType === 'undo') {
+        setFailSafeNotification('↩ Action undone (Ctrl+Z). Spatial state reverted.');
+        setTimeout(() => setFailSafeNotification(null), 2500);
+      } else if (actionType === 'redo') {
+        setFailSafeNotification('↪ Action redone (Ctrl+Y). Spatial state restored.');
+        setTimeout(() => setFailSafeNotification(null), 2500);
+      }
+    },
+    [currentCoords, fieldArea, locationName, fetchAdvisoryReport, checkIfUnsavedChanges]
+  );
+
+  // Undo Function (Ctrl + Z / "Undo" Button)
+  const handleUndo = useCallback(() => {
+    if (pastStatesRef.current.length === 0) return;
+
+    const past = pastStatesRef.current;
+    const previousState = past[past.length - 1];
+    const newPast = past.slice(0, -1);
+    const currentState = currentStateRef.current;
+
+    // Push current state to futureStates (Redo)
+    setFutureStates((prev) => [cloneSpatialState(currentState), ...prev.slice(0, 39)]);
+    setPastStates(newPast);
+    currentStateRef.current = cloneSpatialState(previousState);
+
+    applySpatialState(previousState, 'undo');
+  }, [applySpatialState]);
+
+  // Redo Function (Ctrl + Y or Ctrl + Shift + Z / "Redo" Button)
+  const handleRedo = useCallback(() => {
+    if (futureStatesRef.current.length === 0) return;
+
+    const future = futureStatesRef.current;
+    const nextState = future[0];
+    const newFuture = future.slice(1);
+    const currentState = currentStateRef.current;
+
+    // Push current state to pastStates (Undo)
+    setPastStates((prev) => [...prev.slice(-39), cloneSpatialState(currentState)]);
+    setFutureStates(newFuture);
+    currentStateRef.current = cloneSpatialState(nextState);
+
+    applySpatialState(nextState, 'redo');
+  }, [applySpatialState]);
+
+  // Discard Unsaved Changes: Reverts the workspace back to the last confirmed Google Doc / localStorage snapshot
+  const handleDiscardUnsavedChanges = useCallback(() => {
+    const committed = getCommittedMissionSnapshot();
+    if (!committed || !committed.subZones || committed.subZones.length === 0) {
+      setFailSafeNotification('No confirmed mission performance snapshot found to restore.');
+      setTimeout(() => setFailSafeNotification(null), 3000);
+      return;
+    }
+
+    // Push current state onto pastStates so the user can even Undo the discard if desired
+    const currentState = currentStateRef.current;
+    setPastStates((prev) => [...prev.slice(-39), cloneSpatialState(currentState)]);
+    setFutureStates([]);
+
+    const restoredState: SpatialHistoryState = {
+      subZones: committed.subZones,
+      userCustomizedPlots: committed.plotGeometryState || subZonesToCustomizedPlotsStore(committed.subZones),
+      nfzPolygon:
+        committed.activeNFZGeometry && committed.activeNFZGeometry.length >= 3
+          ? committed.activeNFZGeometry
+          : nfzPolygonRef.current,
+      fieldArea: committed.fieldArea || 2.5,
+    };
+
+    currentStateRef.current = cloneSpatialState(restoredState);
+    applySpatialState(restoredState, 'discard');
+    setHasUnsavedChanges(false);
+
+    setFailSafeNotification(
+      `Reverted workspace to confirmed performance snapshot (${committed.savedAtFormatted || committed.timestamp}).`
+    );
+    playVoiceAlert('Reverted all unsaved changes to last confirmed mission snapshot.', language);
+    setTimeout(() => setFailSafeNotification(null), 4000);
+  }, [applySpatialState, language]);
+
+  // Restore Factory Defaults: Resets all 6 plots back to the initial contiguous 2x3 grid and NFZ default position
+  const handleRestoreFactoryDefaults = useCallback(() => {
+    // Push current state onto pastStates so user can Undo if accidental
+    const currentState = currentStateRef.current;
+    setPastStates((prev) => [...prev.slice(-39), cloneSpatialState(currentState)]);
+    setFutureStates([]);
+
+    // Clear saved mission layout so factory 2x3 default is clean
+    clearSavedMissionLayout();
+
+    const safeCoords = currentCoords || { lat: 10.7769, lng: 106.7009 };
+    const freshSubZones = generateFieldSubZones(safeCoords, fieldArea);
+    const freshNfz = getNfzRestrictedZone(safeCoords);
+
+    const defaultState: SpatialHistoryState = {
+      subZones: freshSubZones,
+      userCustomizedPlots: {},
+      nfzPolygon: freshNfz,
+      fieldArea,
+    };
+
+    currentStateRef.current = cloneSpatialState(defaultState);
+    applySpatialState(defaultState, 'factory_reset');
+
+    // Audit log entry
+    const now = new Date();
+    const timestampFormatted = now.toISOString().replace('T', ' ').substring(0, 19);
+    const logEntry: Omit<AuditLogEntry, 'id'> = {
+      timestamp: timestampFormatted,
+      locationName: `${locationName} (Factory Defaults Restored)`,
+      coordinates: safeCoords,
+      fieldArea,
+      weatherSummary: `${telemetryRef.current.temp.toFixed(1)}°C • Wind: ${telemetryRef.current.windSpeed.toFixed(1)} km/h`,
+      machinery: machineryType,
+      mission: missionType,
+      tankLevel: `${telemetryRef.current.tankLevel.toFixed(1)} L / ${activeUnit.maxTankCapacity}L`,
+      actionApproved: 'Restored all 6 plots back to contiguous 2x3 factory default grid and NFZ reset.',
+      energySavedKgCo2: parseFloat((8.5 + fieldArea * 2.8).toFixed(1)),
+      syncStatus: isOnlineRef.current ? 'SYNCED_ONLINE' : 'CACHED_OFFLINE',
+    };
+    const newLogs = addAuditLog(logEntry);
+    setAuditLogs(newLogs);
+
+    setFailSafeNotification('Restored all 6 plots back to initial 2x3 grid and default NFZ position.');
+    playVoiceAlert('Restored factory default plot grid and NFZ position.', language);
+    setTimeout(() => setFailSafeNotification(null), 3500);
+  }, [
+    currentCoords,
+    fieldArea,
+    locationName,
+    machineryType,
+    missionType,
+    activeUnit.maxTankCapacity,
+    applySpatialState,
+    language,
+  ]);
+
+  // Global Keyboard Shortcuts Listener for Undo (Ctrl+Z) and Redo (Ctrl+Y / Ctrl+Shift+Z)
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Ignore keystrokes inside input, textarea, or select fields
+      const target = e.target as HTMLElement;
+      if (
+        target &&
+        (target.tagName === 'INPUT' ||
+          target.tagName === 'TEXTAREA' ||
+          target.tagName === 'SELECT' ||
+          target.isContentEditable)
+      ) {
+        return;
+      }
+
+      const isCtrlOrMeta = e.ctrlKey || e.metaKey;
+      if (!isCtrlOrMeta) return;
+
+      // Undo: Ctrl+Z or Cmd+Z (without Shift)
+      if (!e.shiftKey && e.key.toLowerCase() === 'z') {
+        e.preventDefault();
+        handleUndo();
+      }
+      // Redo: Ctrl+Y, Cmd+Y, or Ctrl+Shift+Z, Cmd+Shift+Z
+      else if (
+        e.key.toLowerCase() === 'y' ||
+        (e.shiftKey && e.key.toLowerCase() === 'z')
+      ) {
+        e.preventDefault();
+        handleRedo();
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [handleUndo, handleRedo]);
+
   // Handler for Updating Sub-Zones & Re-triggering Advisory
   const handleSubZoneUpdate = useCallback(
     (updatedZones: SubZonePolygonData[]) => {
@@ -514,6 +863,14 @@ export default function App() {
       userCustomizedPlotsRef.current = customStore;
       setCustomPlotCoordinates(updatedZones);
       setHasCustomPlotCoordinates(true);
+
+      // Record in undo/redo history stack
+      recordSpatialAction({
+        subZones: updatedZones,
+        userCustomizedPlots: customStore,
+        nfzPolygon: nfzPolygonRef.current,
+        fieldArea,
+      });
 
       // Immediately stringify and save the complete active layout state into localStorage
       saveActiveMissionLayout({
@@ -532,7 +889,7 @@ export default function App() {
         fetchAdvisoryReport(currentCoords, telemetryRef.current, telemetryRef.current.battery, telemetryRef.current.tankLevel, fieldArea, updatedZones);
       }, 600);
     },
-    [currentCoords, fieldArea, locationName, fetchAdvisoryReport]
+    [currentCoords, fieldArea, locationName, fetchAdvisoryReport, recordSpatialAction]
   );
 
   // Handler for Interactive Field Plot Repositioning & Real-Time NFZ Validation
@@ -552,6 +909,14 @@ export default function App() {
       setCustomPlotCoordinates(updatedZones);
       setHasCustomPlotCoordinates(true);
       setHasNfzConflict(hasNfz);
+
+      // Record in undo/redo history stack
+      recordSpatialAction({
+        subZones: updatedZones,
+        userCustomizedPlots: customStore,
+        nfzPolygon: nfzPolygonRef.current,
+        fieldArea,
+      });
 
       // Immediately stringify and save the complete active layout state into localStorage
       saveActiveMissionLayout({
@@ -653,6 +1018,7 @@ export default function App() {
       fetchAdvisoryReport,
       failSafeNotification,
       language,
+      recordSpatialAction,
     ]
   );
 
@@ -662,6 +1028,14 @@ export default function App() {
       setNfzPolygon(newNfzPolygon);
       nfzPolygonRef.current = newNfzPolygon;
       setHasNfzConflict(hasNfz);
+
+      // Record in undo/redo history stack
+      recordSpatialAction({
+        subZones: subZonesRef.current,
+        userCustomizedPlots: userCustomizedPlotsRef.current,
+        nfzPolygon: newNfzPolygon,
+        fieldArea,
+      });
 
       // Immediately stringify and save active layout with new NFZ geometry
       saveActiveMissionLayout({
@@ -719,72 +1093,19 @@ export default function App() {
       activeUnit.maxTankCapacity,
       failSafeNotification,
       language,
+      recordSpatialAction,
     ]
   );
 
   // Handler for Resetting Prescription to Default Balanced Matrix
   const handleResetPrescription = useCallback(() => {
-    // Clear saved mission layout so default 2x3 grid is restored
-    clearSavedMissionLayout();
-
-    const safeCoords = currentCoords || { lat: 10.7769, lng: 106.7009 };
-    const fresh = generateFieldSubZones(safeCoords, fieldArea);
-    setSubZones(fresh);
-    subZonesRef.current = fresh;
-    setUserCustomizedPlots({});
-    userCustomizedPlotsRef.current = {};
-    setCustomPlotCoordinates(null);
-    setHasCustomPlotCoordinates(false);
-    const freshNfz = getNfzRestrictedZone(safeCoords);
-    setNfzPolygon(freshNfz);
-    nfzPolygonRef.current = freshNfz;
-    setHasNfzConflict(false);
-    fetchAdvisoryReport(safeCoords, telemetryRef.current, telemetryRef.current.battery, telemetryRef.current.tankLevel, fieldArea, fresh);
-    setFailSafeNotification('Restored plots to initial default 2x3 grid layout.');
-    setTimeout(() => setFailSafeNotification(null), 3500);
-  }, [currentCoords, fieldArea, fetchAdvisoryReport]);
+    handleRestoreFactoryDefaults();
+  }, [handleRestoreFactoryDefaults]);
 
   // Handler for Explicitly Resetting Plots to Initial Position
   const handleResetPlotPositions = useCallback(() => {
-    // Clear saved mission layout so default 2x3 grid is restored
-    clearSavedMissionLayout();
-
-    const safeCoords = currentCoords || { lat: 10.7769, lng: 106.7009 };
-    const fresh = generateFieldSubZones(safeCoords, fieldArea);
-    setSubZones(fresh);
-    subZonesRef.current = fresh;
-    setUserCustomizedPlots({});
-    userCustomizedPlotsRef.current = {};
-    setCustomPlotCoordinates(null);
-    setHasCustomPlotCoordinates(false);
-    const freshNfz = getNfzRestrictedZone(safeCoords);
-    setNfzPolygon(freshNfz);
-    nfzPolygonRef.current = freshNfz;
-    setHasNfzConflict(false);
-
-    // Audit log entry
-    const now = new Date();
-    const timestampFormatted = now.toISOString().replace('T', ' ').substring(0, 19);
-    const logEntry: Omit<AuditLogEntry, 'id'> = {
-      timestamp: timestampFormatted,
-      locationName: `${locationName} (Plot Positions Reset)`,
-      coordinates: safeCoords,
-      fieldArea,
-      weatherSummary: `${telemetryRef.current.temp.toFixed(1)}°C • Wind: ${telemetryRef.current.windSpeed.toFixed(1)} km/h`,
-      machinery: machineryType,
-      mission: missionType,
-      tankLevel: `${telemetryRef.current.tankLevel.toFixed(1)} L / ${activeUnit.maxTankCapacity}L`,
-      actionApproved: 'Restored all sector plot coordinates and geometry to initial default grid layout.',
-      energySavedKgCo2: parseFloat((8.5 + fieldArea * 2.8).toFixed(1)),
-      syncStatus: isOnlineRef.current ? 'SYNCED_ONLINE' : 'CACHED_OFFLINE',
-    };
-    const newLogs = addAuditLog(logEntry);
-    setAuditLogs(newLogs);
-
-    fetchAdvisoryReport(safeCoords, telemetryRef.current, telemetryRef.current.battery, telemetryRef.current.tankLevel, fieldArea, fresh);
-    setFailSafeNotification('Restored plots to initial default 2x3 grid layout.');
-    setTimeout(() => setFailSafeNotification(null), 3500);
-  }, [currentCoords, fieldArea, locationName, machineryType, missionType, activeUnit.maxTankCapacity, fetchAdvisoryReport]);
+    handleRestoreFactoryDefaults();
+  }, [handleRestoreFactoryDefaults]);
 
   // Handler for "Confirm & Save Mission Performance"
   const handleAcceptSaveMissionPerformance = useCallback(() => {
@@ -840,6 +1161,15 @@ export default function App() {
     const newLogs = addAuditLog(logEntry);
     setAuditLogs(newLogs);
 
+    // 4. Update committed snapshot baseline and reset unsaved indicator
+    lastCommittedJsonRef.current = JSON.stringify({
+      subZones: activePlots,
+      plotGeometryState: userCustomizedPlotsRef.current || {},
+      activeNFZGeometry: activeNfz || [],
+      fieldArea,
+    });
+    setHasUnsavedChanges(false);
+
     playVoiceAlert('Mission performance confirmed and saved to browser storage.', language);
   }, [
     subZones,
@@ -866,6 +1196,10 @@ export default function App() {
       if (!savedState || !Array.isArray(savedState.subZones) || savedState.subZones.length === 0) {
         return;
       }
+
+      // 0. Push current state onto pastStates before loading restored mission so user can Undo if desired
+      setPastStates((prev) => [...prev.slice(-39), cloneSpatialState(currentStateRef.current)]);
+      setFutureStates([]);
 
       // 1. Update Subzones
       setSubZones(savedState.subZones);
@@ -934,6 +1268,20 @@ export default function App() {
 
       // 9. Audio and UI notification
       const activeCount = savedState.subZones.filter((z) => z.enabled !== false).length;
+      lastCommittedJsonRef.current = JSON.stringify({
+        subZones: savedState.subZones,
+        plotGeometryState: store,
+        activeNFZGeometry: activeNfz || [],
+        fieldArea: targetArea,
+      });
+      currentStateRef.current = {
+        subZones: savedState.subZones,
+        userCustomizedPlots: store,
+        nfzPolygon: activeNfz || [],
+        fieldArea: targetArea,
+      };
+      setHasUnsavedChanges(false);
+
       setFailSafeNotification(
         `Successfully restored mission layout: ${savedState.subZones.length} sectors (${activeCount} active, ${targetArea.toFixed(1)} ha).`
       );
@@ -2861,6 +3209,15 @@ export default function App() {
         onExportVietGapPdf={handleExportVietGapPdf}
         onAcceptSaveMission={handleAcceptSaveMissionPerformance}
         onOpenSavedMission={handleOpenSavedMission}
+        canUndo={pastStates.length > 0}
+        canRedo={futureStates.length > 0}
+        onUndo={handleUndo}
+        onRedo={handleRedo}
+        hasUnsavedChanges={hasUnsavedChanges}
+        onDiscardUnsavedChanges={handleDiscardUnsavedChanges}
+        onRestoreFactoryDefaults={handleRestoreFactoryDefaults}
+        pastCount={pastStates.length}
+        futureCount={futureStates.length}
       />
 
       {/* Main Workspace Dashboard */}
@@ -2898,6 +3255,10 @@ export default function App() {
               onNfzRepositioned={handleNfzRepositioned}
               onAcceptSaveMission={handleAcceptSaveMissionPerformance}
               onOpenSavedMission={handleOpenSavedMission}
+              canUndo={pastStates.length > 0}
+              canRedo={futureStates.length > 0}
+              onUndo={handleUndo}
+              onRedo={handleRedo}
             />
           </div>
 
